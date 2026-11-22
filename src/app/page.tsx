@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabase";
 import {
   Home,
@@ -91,7 +91,116 @@ export default function ApexHybridApp() {
   const [selectedRoutineId, setSelectedRoutineId] = useState<number | null>(null);
   const [openVideoExerciseId, setOpenVideoExerciseId] = useState<string | null>(null);
   const [openPrepMealId, setOpenPrepMealId] = useState<string | null>(null);
-  const [scannerNote, setScannerNote] = useState<string>("");
+
+  // Estados Cámara Escáner IA APEX
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState<string>("");
+  const [capturedPhoto, setCapturedPhoto] = useState<string>("");
+  const [scanKcal, setScanKcal] = useState<string>("450");
+  const [scanProtein, setScanProtein] = useState<string>("35");
+  const [scanCarbs, setScanCarbs] = useState<string>("45");
+  const [scanFats, setScanFats] = useState<string>("12");
+  const [extraScanKcal, setExtraScanKcal] = useState<number>(0);
+  const [extraScanProtein, setExtraScanProtein] = useState<number>(0);
+  const [extraScanCarbs, setExtraScanCarbs] = useState<number>(0);
+  const [extraScanFats, setExtraScanFats] = useState<number>(0);
+  const [scannerStatusMsg, setScannerStatusMsg] = useState<string>("");
+
+  const stopCameraStream = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setIsCameraOpen(false);
+  };
+
+  const startCameraScan = async () => {
+    setCameraError("");
+    setScannerStatusMsg("");
+    setCapturedPhoto("");
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraError("Tu navegador no soporta el acceso directo a la cámara en este dispositivo.");
+      return;
+    }
+
+    try {
+      stopCameraStream();
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
+      streamRef.current = stream;
+      setIsCameraOpen(true);
+
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+      }, 60);
+    } catch (err: any) {
+      setCameraError(
+        err?.name === "NotAllowedError"
+          ? "Permiso de cámara denegado. Actívalo en los ajustes del navegador para este sitio."
+          : "No se pudo abrir la cámara. Verifica que no esté en uso por otra app."
+      );
+    }
+  };
+
+  const capturePhotoFrame = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      setCapturedPhoto(dataUrl);
+    }
+    stopCameraStream();
+  };
+
+  const applyScannedMacros = (e: React.FormEvent) => {
+    e.preventDefault();
+    const k = Number(scanKcal) || 0;
+    const p = Number(scanProtein) || 0;
+    const c = Number(scanCarbs) || 0;
+    const f = Number(scanFats) || 0;
+
+    setExtraScanKcal((prev) => prev + k);
+    setExtraScanProtein((prev) => prev + p);
+    setExtraScanCarbs((prev) => prev + c);
+    setExtraScanFats((prev) => prev + f);
+    setScannerStatusMsg(`Añadidos +${k} kcal (${p}g P · ${c}g C · ${f}g G) al registro de hoy.`);
+    setCapturedPhoto("");
+  };
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
 
   // Temporizador de descanso
   const [restTimeLeft, setRestTimeLeft] = useState<number>(0);
@@ -680,10 +789,14 @@ export default function ApexHybridApp() {
 
   const completedMealsCount = Object.values(completedMeals).filter(Boolean).length;
   const completedSuppsCount = Object.values(completedSupps).filter(Boolean).length;
-  const consumedKcal = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.kcal : acc), 0);
-  const consumedProtein = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.protein : acc), 0);
-  const consumedCarbs = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.carbs : acc), 0);
-  const consumedFats = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.fats : acc), 0);
+  const consumedKcal =
+    meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.kcal : acc), 0) + extraScanKcal;
+  const consumedProtein =
+    meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.protein : acc), 0) + extraScanProtein;
+  const consumedCarbs =
+    meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.carbs : acc), 0) + extraScanCarbs;
+  const consumedFats =
+    meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.fats : acc), 0) + extraScanFats;
 
   const targetKcal = activeClient.kcalTarget || 2200;
   const targetProtein = activeClient.proteinTarget || 185;
@@ -966,7 +1079,10 @@ export default function ApexHybridApp() {
           </div>
 
           <button
-            onClick={() => setAppMode(appMode === "athlete" ? "coach" : "athlete")}
+            onClick={() => {
+              stopCameraStream();
+              setAppMode(appMode === "athlete" ? "coach" : "athlete");
+            }}
             className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 border transition ${
               appMode === "coach"
                 ? "bg-[#4DF500] text-black border-[#4DF500] shadow-[0_0_15px_rgba(77,245,0,0.3)]"
@@ -1902,7 +2018,8 @@ export default function ApexHybridApp() {
                     </div>
                   </div>
 
-                  <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-2.5">
+                  {/* ESCÁNER IA APEX CON CÁMARA REAL */}
+                  <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="w-11 h-11 rounded-xl bg-[#4DF500]/10 border border-[#4DF500]/30 text-[#4DF500] flex items-center justify-center">
@@ -1914,21 +2031,118 @@ export default function ApexHybridApp() {
                         </div>
                       </div>
                       <button
-                        onClick={() =>
-                          setScannerNote((prev) =>
-                            prev
-                              ? ""
-                              : "Referencia rápida: 200 g pollo/pavo + 250 g patata/arroz ≈ 520 kcal · 48g P · 60g C · 7g G."
-                          )
-                        }
+                        type="button"
+                        onClick={() => {
+                          if (isCameraOpen) {
+                            stopCameraStream();
+                          } else {
+                            startCameraScan();
+                          }
+                        }}
                         className="bg-[#4DF500] text-black font-extrabold text-xs px-4 py-2 rounded-xl"
                       >
-                        {scannerNote ? "Cerrar" : "Escanear"}
+                        {isCameraOpen ? "Cerrar" : "Escanear"}
                       </button>
                     </div>
-                    {scannerNote && (
-                      <p className="text-[11px] text-zinc-200 bg-[#181B20] border border-[#4DF500]/30 rounded-xl p-2.5">
-                        {scannerNote}
+
+                    {cameraError && (
+                      <p className="text-[11px] text-rose-400 bg-rose-950/40 border border-rose-800/60 rounded-xl p-2.5">
+                        {cameraError}
+                      </p>
+                    )}
+
+                    {isCameraOpen && (
+                      <div className="space-y-2.5">
+                        <div className="rounded-xl overflow-hidden border border-zinc-700 bg-black relative">
+                          <video
+                            ref={videoRef}
+                            playsInline
+                            muted
+                            className="w-full h-52 object-cover"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={capturePhotoFrame}
+                          className="w-full bg-[#4DF500] text-black font-extrabold text-xs py-2.5 rounded-xl"
+                        >
+                          Tomar foto
+                        </button>
+                      </div>
+                    )}
+
+                    <canvas ref={canvasRef} className="hidden" />
+
+                    {capturedPhoto && (
+                      <form onSubmit={applyScannedMacros} className="space-y-3 pt-1">
+                        <div className="rounded-xl overflow-hidden border border-[#4DF500]/40 bg-black">
+                          <img
+                            src={capturedPhoto}
+                            alt="Captura de comida"
+                            className="w-full h-44 object-cover"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] text-zinc-400 block mb-1">Calorías (kcal)</label>
+                            <input
+                              type="number"
+                              value={scanKcal}
+                              onChange={(e) => setScanKcal(e.target.value)}
+                              className="w-full bg-[#0A0B0D] border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-400 block mb-1">Proteína (g)</label>
+                            <input
+                              type="number"
+                              value={scanProtein}
+                              onChange={(e) => setScanProtein(e.target.value)}
+                              className="w-full bg-[#0A0B0D] border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-400 block mb-1">Carbohidratos (g)</label>
+                            <input
+                              type="number"
+                              value={scanCarbs}
+                              onChange={(e) => setScanCarbs(e.target.value)}
+                              className="w-full bg-[#0A0B0D] border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-400 block mb-1">Grasas (g)</label>
+                            <input
+                              type="number"
+                              value={scanFats}
+                              onChange={(e) => setScanFats(e.target.value)}
+                              className="w-full bg-[#0A0B0D] border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            className="flex-1 bg-[#4DF500] text-black font-extrabold text-xs py-2.5 rounded-xl"
+                          >
+                            Sumar a mi día
+                          </button>
+                          <button
+                            type="button"
+                            onClick={startCameraScan}
+                            className="px-3 py-2.5 rounded-xl bg-[#181B20] border border-zinc-700 text-xs text-zinc-300"
+                          >
+                            Repetir
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {scannerStatusMsg && (
+                      <p className="text-[11px] text-[#4DF500] bg-[#172115] border border-[#4DF500]/30 rounded-xl p-2.5">
+                        {scannerStatusMsg}
                       </p>
                     )}
                   </div>
@@ -2238,6 +2452,7 @@ export default function ApexHybridApp() {
                   <button
                     key={tab.id}
                     onClick={() => {
+                      stopCameraStream();
                       setSelectedRoutineId(null);
                       setActiveTab(tab.id as any);
                     }}
