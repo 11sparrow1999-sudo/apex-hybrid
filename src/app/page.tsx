@@ -87,8 +87,11 @@ export default function ApexHybridApp() {
   const [activeTab, setActiveTab] = useState<"hoy" | "entreno" | "dieta" | "progreso" | "perfil">("hoy");
   const [selectedDay, setSelectedDay] = useState("Mar");
   const [waterGlasses, setWaterGlasses] = useState(5);
+  const [stepsToday, setStepsToday] = useState(6840);
   const [selectedRoutineId, setSelectedRoutineId] = useState<number | null>(null);
   const [openVideoExerciseId, setOpenVideoExerciseId] = useState<string | null>(null);
+  const [openPrepMealId, setOpenPrepMealId] = useState<string | null>(null);
+  const [scannerNote, setScannerNote] = useState<string>("");
 
   // Temporizador de descanso
   const [restTimeLeft, setRestTimeLeft] = useState<number>(0);
@@ -535,7 +538,11 @@ export default function ApexHybridApp() {
       name: "Desayuno",
       time: "08:00",
       kcal: 581,
+      protein: 30,
+      carbs: 63,
+      fats: 24,
       summary: "Yogur griego natural · Copos de avena...",
+      prep: "Mezcla 200 g de yogur griego natural con 50 g de avena, añade 80 g de arándanos y 20 g de almendras troceadas, y corona con 10 g de miel.",
       items: [
         { name: "Yogur griego natural", detail: "200 g · 18g P · 8g C · 10g G", kcal: 194 },
         { name: "Copos de avena", detail: "50 g · 7g P · 33g C · 4g G", kcal: 195 },
@@ -549,7 +556,11 @@ export default function ApexHybridApp() {
       name: "Media mañana",
       time: "11:30",
       kcal: 238,
+      protein: 24,
+      carbs: 29,
+      fats: 2,
       summary: "Pan integral · Pechuga de pavo...",
+      prep: "Tuesta 60 g de pan integral y rellénalo con 80 g de pechuga de pavo en lonchas.",
       items: [
         { name: "Pan integral", detail: "60 g · 6g P · 28g C · 1g G", kcal: 148 },
         { name: "Pechuga de pavo", detail: "80 g · 18g P · 1g C · 1g G", kcal: 90 },
@@ -560,7 +571,11 @@ export default function ApexHybridApp() {
       name: "Comida",
       time: "14:00",
       kcal: 651,
+      protein: 49,
+      carbs: 60,
+      fats: 22,
       summary: "Ternera magra · Patata · Espinaca...",
+      prep: "Cocina 200 g de ternera magra a la plancha, acompaña con 350 g de patata cocida y aliña en crudo con 10 g de aceite de oliva virgen extra.",
       items: [
         { name: "Ternera magra", detail: "200 g · 42g P · 0g C · 12g G", kcal: 280 },
         { name: "Patata cocida", detail: "350 g · 7g P · 60g C · 0g G", kcal: 270 },
@@ -572,7 +587,11 @@ export default function ApexHybridApp() {
       name: "Merienda",
       time: "18:00",
       kcal: 209,
+      protein: 25,
+      carbs: 23,
+      fats: 1,
       summary: "Batido de proteína · Plátano",
+      prep: "Agita 30 g de proteína Whey con agua o bebida vegetal y acompaña con 100 g de plátano.",
       items: [
         { name: "Proteína Whey", detail: "30 g · 24g P · 2g C · 1g G", kcal: 119 },
         { name: "Plátano", detail: "100 g · 1g P · 21g C · 0g G", kcal: 90 },
@@ -583,7 +602,11 @@ export default function ApexHybridApp() {
       name: "Cena",
       time: "21:00",
       kcal: 502,
+      protein: 63,
+      carbs: 42,
+      fats: 6,
       summary: "Pechuga de pavo · Lentejas cocidas...",
+      prep: "Haz 200 g de pechuga de pavo a la plancha y sírvela junto a 220 g de lentejas cocidas escurridas y templadas.",
       items: [
         { name: "Pechuga de pavo a la plancha", detail: "200 g · 44g P · 0g C · 4g G", kcal: 220 },
         { name: "Lentejas cocidas", detail: "220 g · 19g P · 42g C · 2g G", kcal: 282 },
@@ -658,12 +681,40 @@ export default function ApexHybridApp() {
   const completedMealsCount = Object.values(completedMeals).filter(Boolean).length;
   const completedSuppsCount = Object.values(completedSupps).filter(Boolean).length;
   const consumedKcal = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.kcal : acc), 0);
+  const consumedProtein = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.protein : acc), 0);
+  const consumedCarbs = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.carbs : acc), 0);
+  const consumedFats = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.fats : acc), 0);
+
   const targetKcal = activeClient.kcalTarget || 2200;
   const targetProtein = activeClient.proteinTarget || 185;
   const targetCarbs = activeClient.carbsTarget || 235;
   const targetFats = activeClient.fatsTarget || 68;
   const remainingKcal = Math.max(0, targetKcal - consumedKcal);
   const kcalPercent = Math.min(100, Math.round((consumedKcal / targetKcal) * 100));
+
+  const shareMealsWhatsApp = () => {
+    const lines = meals.map(
+      (m) => `${completedMeals[m.id] ? "✅" : "⬜"} ${m.name} (${m.time}) - ${m.kcal} kcal: ${m.summary}`
+    );
+    const text = `📋 *Plan Nutricional APEX HYBRID · ${activeClient.name}*\n🔥 Objetivo: ${targetKcal} kcal (${consumedKcal} kcal hoy)\n🥩 Macros: ${consumedProtein}/${targetProtein}g P · ${consumedCarbs}/${targetCarbs}g C · ${consumedFats}/${targetFats}g G\n\n${lines.join("\n")}${
+      activeClient.dietPlan ? `\n\n📝 *Pauta Coach:*\n${activeClient.dietPlan}` : ""
+    }`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  };
+
+  const shareGroceryWhatsApp = () => {
+    const lines = groceryItems.map(
+      (g) => `${checkedGroceries[g.id] ? "✅" : "⬜"} ${g.name} (${g.detail})`
+    );
+    const text = `🛒 *Lista de la Compra (${selectedSupermarket}) · APEX HYBRID*\n\n${lines.join("\n")}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  };
+
+  const exportPdfView = () => {
+    if (typeof window !== "undefined") {
+      window.print();
+    }
+  };
 
   const toggleMeal = (id: string) => {
     setCompletedMeals((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -1378,7 +1429,7 @@ export default function ApexHybridApp() {
                             <Activity className="w-4 h-4 text-sky-400" />
                             <span className="text-xs text-zinc-300">Pasos</span>
                           </div>
-                          <span className="text-xs font-extrabold">6.840</span>
+                          <span className="text-xs font-extrabold">{stepsToday.toLocaleString("es-ES")}</span>
                         </div>
 
                         <div className="bg-[#181B20] border border-zinc-800/80 rounded-xl p-2.5 flex items-center justify-between">
@@ -1630,16 +1681,24 @@ export default function ApexHybridApp() {
                             <div>
                               <p className="font-bold text-sm">Resistencia · Pasos diarios</p>
                               <p className="text-xs text-sky-400 font-bold">
-                                6.840 <span className="text-zinc-500 font-normal">/ 10.000 pasos</span>
+                                {stepsToday.toLocaleString("es-ES")}{" "}
+                                <span className="text-zinc-500 font-normal">/ 10.000 pasos</span>
                               </p>
                             </div>
                           </div>
-                          <button className="w-9 h-9 rounded-xl bg-sky-400 text-black flex items-center justify-center font-bold">
+                          <button
+                            onClick={() => setStepsToday((prev) => prev + 1000)}
+                            className="w-9 h-9 rounded-xl bg-sky-400 text-black flex items-center justify-center font-bold hover:bg-sky-300 transition"
+                            title="Sumar 1.000 pasos"
+                          >
                             <Plus className="w-4 h-4" />
                           </button>
                         </div>
                         <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                          <div className="h-full bg-sky-400 rounded-full w-[68%]" />
+                          <div
+                            className="h-full bg-sky-400 rounded-full transition-all"
+                            style={{ width: `${Math.min(100, Math.round((stepsToday / 10000) * 100))}%` }}
+                          />
                         </div>
                       </div>
 
@@ -1744,13 +1803,16 @@ export default function ApexHybridApp() {
                           <div className="flex justify-between text-xs mb-1">
                             <span className="text-zinc-300 font-medium">Proteína</span>
                             <span className="font-bold">
-                              55<span className="text-zinc-500 font-normal">/{targetProtein}g</span>
+                              {consumedProtein}
+                              <span className="text-zinc-500 font-normal">/{targetProtein}g</span>
                             </span>
                           </div>
                           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-[#4DF500] rounded-full"
-                              style={{ width: `${Math.min(100, Math.round((55 / Math.max(1, targetProtein)) * 100))}%` }}
+                              className="h-full bg-[#4DF500] rounded-full transition-all"
+                              style={{
+                                width: `${Math.min(100, Math.round((consumedProtein / Math.max(1, targetProtein)) * 100))}%`,
+                              }}
                             />
                           </div>
                         </div>
@@ -1758,13 +1820,16 @@ export default function ApexHybridApp() {
                           <div className="flex justify-between text-xs mb-1">
                             <span className="text-zinc-300 font-medium">Carbohidratos</span>
                             <span className="font-bold">
-                              91<span className="text-zinc-500 font-normal">/{targetCarbs}g</span>
+                              {consumedCarbs}
+                              <span className="text-zinc-500 font-normal">/{targetCarbs}g</span>
                             </span>
                           </div>
                           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-sky-400 rounded-full"
-                              style={{ width: `${Math.min(100, Math.round((91 / Math.max(1, targetCarbs)) * 100))}%` }}
+                              className="h-full bg-sky-400 rounded-full transition-all"
+                              style={{
+                                width: `${Math.min(100, Math.round((consumedCarbs / Math.max(1, targetCarbs)) * 100))}%`,
+                              }}
                             />
                           </div>
                         </div>
@@ -1772,13 +1837,16 @@ export default function ApexHybridApp() {
                           <div className="flex justify-between text-xs mb-1">
                             <span className="text-zinc-300 font-medium">Grasas</span>
                             <span className="font-bold">
-                              27<span className="text-zinc-500 font-normal">/{targetFats}g</span>
+                              {consumedFats}
+                              <span className="text-zinc-500 font-normal">/{targetFats}g</span>
                             </span>
                           </div>
                           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-amber-400 rounded-full"
-                              style={{ width: `${Math.min(100, Math.round((27 / Math.max(1, targetFats)) * 100))}%` }}
+                              className="h-full bg-amber-400 rounded-full transition-all"
+                              style={{
+                                width: `${Math.min(100, Math.round((consumedFats / Math.max(1, targetFats)) * 100))}%`,
+                              }}
                             />
                           </div>
                         </div>
@@ -1834,29 +1902,51 @@ export default function ApexHybridApp() {
                     </div>
                   </div>
 
-                  <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-11 h-11 rounded-xl bg-[#4DF500]/10 border border-[#4DF500]/30 text-[#4DF500] flex items-center justify-center">
-                        <Camera className="w-5 h-5" />
+                  <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-[#4DF500]/10 border border-[#4DF500]/30 text-[#4DF500] flex items-center justify-center">
+                          <Camera className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="font-bold text-sm">Escáner IA APEX</p>
+                          <p className="text-[11px] text-zinc-400">Analiza macros de cualquier plato o etiqueta.</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-bold text-sm">Escáner IA APEX</p>
-                        <p className="text-[11px] text-zinc-400">Analiza macros de cualquier plato o etiqueta.</p>
-                      </div>
+                      <button
+                        onClick={() =>
+                          setScannerNote((prev) =>
+                            prev
+                              ? ""
+                              : "Referencia rápida: 200 g pollo/pavo + 250 g patata/arroz ≈ 520 kcal · 48g P · 60g C · 7g G."
+                          )
+                        }
+                        className="bg-[#4DF500] text-black font-extrabold text-xs px-4 py-2 rounded-xl"
+                      >
+                        {scannerNote ? "Cerrar" : "Escanear"}
+                      </button>
                     </div>
-                    <button className="bg-[#4DF500] text-black font-extrabold text-xs px-4 py-2 rounded-xl">
-                      Escanear
-                    </button>
+                    {scannerNote && (
+                      <p className="text-[11px] text-zinc-200 bg-[#181B20] border border-[#4DF500]/30 rounded-xl p-2.5">
+                        {scannerNote}
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <h2 className="font-bold text-sm">Comidas · Martes</h2>
                       <div className="flex items-center gap-2">
-                        <button className="bg-[#25D366] text-black font-bold text-xs px-3 py-1.5 rounded-xl">
+                        <button
+                          onClick={shareMealsWhatsApp}
+                          className="bg-[#25D366] text-black font-bold text-xs px-3 py-1.5 rounded-xl"
+                        >
                           WhatsApp
                         </button>
-                        <button className="bg-[#181B20] border border-zinc-800 text-zinc-300 font-semibold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1">
+                        <button
+                          onClick={exportPdfView}
+                          className="bg-[#181B20] border border-zinc-800 text-zinc-300 font-semibold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1"
+                        >
                           <FileText className="w-3 h-3" /> PDF
                         </button>
                       </div>
@@ -1865,6 +1955,7 @@ export default function ApexHybridApp() {
                     {meals.map((meal) => {
                       const isDone = completedMeals[meal.id];
                       const isExpanded = expandedMeal === meal.id;
+                      const isPrepOpen = openPrepMealId === meal.id;
                       return (
                         <div
                           key={meal.id}
@@ -1930,9 +2021,18 @@ export default function ApexHybridApp() {
                                   <span className="text-xs font-bold">{item.kcal} kcal</span>
                                 </div>
                               ))}
-                              <button className="w-full py-2.5 rounded-xl bg-[#181B20] border border-zinc-800 text-[#4DF500] text-xs font-semibold flex items-center justify-center gap-1.5 mt-2">
-                                <Flame className="w-3.5 h-3.5" /> Ver preparación
+                              <button
+                                onClick={() => setOpenPrepMealId(isPrepOpen ? null : meal.id)}
+                                className="w-full py-2.5 rounded-xl bg-[#181B20] border border-zinc-800 text-[#4DF500] text-xs font-semibold flex items-center justify-center gap-1.5 mt-2"
+                              >
+                                <Flame className="w-3.5 h-3.5" />{" "}
+                                {isPrepOpen ? "Ocultar preparación" : "Ver preparación"}
                               </button>
+                              {isPrepOpen && (
+                                <p className="text-xs text-zinc-300 bg-[#0E1013] border border-zinc-800 rounded-xl p-3 leading-relaxed">
+                                  {meal.prep}
+                                </p>
+                              )}
                             </div>
                           )}
                         </div>
@@ -2007,12 +2107,12 @@ export default function ApexHybridApp() {
                         <ShoppingCart className="w-4 h-4 text-[#4DF500]" /> Lista de la Compra
                       </h2>
                       <span className="text-xs bg-zinc-800 px-2.5 py-1 rounded-md text-zinc-300">
-                        {Object.values(checkedGroceries).filter(Boolean).length}/26
+                        {Object.values(checkedGroceries).filter(Boolean).length}/{groceryItems.length}
                       </span>
                     </div>
 
                     <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-3">
-                      <p className="text-xs text-zinc-400">26 productos semanales</p>
+                      <p className="text-xs text-zinc-400">{groceryItems.length} productos semanales</p>
                       <div className="flex gap-2">
                         {["Mercadona", "HiperDino", "Lidl"].map((shop) => (
                           <button
@@ -2029,17 +2129,23 @@ export default function ApexHybridApp() {
                         ))}
                       </div>
                       <div className="flex gap-2">
-                        <button className="flex-1 py-2 rounded-xl bg-[#25D366] text-black font-bold text-xs">
+                        <button
+                          onClick={shareGroceryWhatsApp}
+                          className="flex-1 py-2 rounded-xl bg-[#25D366] text-black font-bold text-xs"
+                        >
                           Enviar por WhatsApp
                         </button>
-                        <button className="px-4 py-2 rounded-xl bg-[#181B20] border border-zinc-800 text-zinc-300 font-semibold text-xs">
+                        <button
+                          onClick={exportPdfView}
+                          className="px-4 py-2 rounded-xl bg-[#181B20] border border-zinc-800 text-zinc-300 font-semibold text-xs"
+                        >
                           PDF
                         </button>
                       </div>
                     </div>
 
                     <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-3">
-                      <p className="text-xs font-bold text-zinc-200">Frutas · 4</p>
+                      <p className="text-xs font-bold text-zinc-200">Frutas · {groceryItems.length}</p>
                       {groceryItems.map((item) => {
                         const checked = !!checkedGroceries[item.id];
                         return (
