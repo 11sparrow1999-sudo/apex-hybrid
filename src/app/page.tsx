@@ -19,7 +19,6 @@ import {
   Droplets,
   Camera,
   ShoppingCart,
-  MessageSquare,
   FileText,
   Zap,
   Heart,
@@ -36,6 +35,7 @@ import {
   Send,
   PlusCircle,
   CloudCheck,
+  Utensils,
 } from "lucide-react";
 
 interface ExerciseSet {
@@ -70,13 +70,17 @@ interface ClientProfile {
   goal: string;
   plan: string;
   kcalTarget: number;
+  proteinTarget: number;
+  carbsTarget: number;
+  fatsTarget: number;
+  dietPlan: string;
   compliance: number;
   coachNote: string;
 }
 
 export default function ApexHybridApp() {
   const [appMode, setAppMode] = useState<"athlete" | "coach">("athlete");
-  const [coachSubTab, setCoachSubTab] = useState<"clientes" | "biblioteca" | "asignar">("clientes");
+  const [coachSubTab, setCoachSubTab] = useState<"clientes" | "biblioteca" | "dieta" | "asignar">("clientes");
   const [dbConnected, setDbConnected] = useState<boolean>(false);
 
   // Estados Modo Atleta
@@ -120,6 +124,10 @@ export default function ApexHybridApp() {
       goal: "Recomposición & Fuerza Híbrida",
       plan: "APEX Pro · Mensual",
       kcalTarget: 2300,
+      proteinTarget: 185,
+      carbsTarget: 235,
+      fatsTarget: 68,
+      dietPlan: "",
       compliance: 92,
       coachNote: "Cargando directivas desde la nube...",
     },
@@ -141,6 +149,21 @@ export default function ApexHybridApp() {
   const [targetRoutineForNewEx, setTargetRoutineForNewEx] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [coachDirectiveDraft, setCoachDirectiveDraft] = useState("");
+
+  // Borrador de prescripción de dieta en Modo Coach
+  const [dietKcalDraft, setDietKcalDraft] = useState("2300");
+  const [dietProteinDraft, setDietProteinDraft] = useState("185");
+  const [dietCarbsDraft, setDietCarbsDraft] = useState("235");
+  const [dietFatsDraft, setDietFatsDraft] = useState("68");
+  const [dietPlanDraft, setDietPlanDraft] = useState("");
+
+  const syncDietDraftWithClient = (client: ClientProfile) => {
+    setDietKcalDraft(String(client.kcalTarget || 2200));
+    setDietProteinDraft(String(client.proteinTarget || 180));
+    setDietCarbsDraft(String(client.carbsTarget || 220));
+    setDietFatsDraft(String(client.fatsTarget || 65));
+    setDietPlanDraft(client.dietPlan || "");
+  };
 
   const [completedMeals, setCompletedMeals] = useState<Record<string, boolean>>({
     desayuno: true,
@@ -438,12 +461,17 @@ export default function ApexHybridApp() {
             goal: c.goal,
             plan: c.plan || "APEX Pro · Mensual",
             kcalTarget: c.kcal_target || 2200,
+            proteinTarget: c.protein_g || 185,
+            carbsTarget: c.carbs_g || 235,
+            fatsTarget: c.fats_g || 68,
+            dietPlan: c.diet_plan || "",
             compliance: c.compliance || 100,
             coachNote: c.coach_note || "",
           }));
           setClients(mappedClients);
           setSelectedClientId(mappedClients[0].id);
           setCoachDirectiveDraft(mappedClients[0].coachNote);
+          syncDietDraftWithClient(mappedClients[0]);
           setDbConnected(true);
         }
 
@@ -630,7 +658,10 @@ export default function ApexHybridApp() {
   const completedMealsCount = Object.values(completedMeals).filter(Boolean).length;
   const completedSuppsCount = Object.values(completedSupps).filter(Boolean).length;
   const consumedKcal = meals.reduce((acc, m) => (completedMeals[m.id] ? acc + m.kcal : acc), 0);
-  const targetKcal = activeClient.kcalTarget;
+  const targetKcal = activeClient.kcalTarget || 2200;
+  const targetProtein = activeClient.proteinTarget || 185;
+  const targetCarbs = activeClient.carbsTarget || 235;
+  const targetFats = activeClient.fatsTarget || 68;
   const remainingKcal = Math.max(0, targetKcal - consumedKcal);
   const kcalPercent = Math.min(100, Math.round((consumedKcal / targetKcal) * 100));
 
@@ -693,6 +724,10 @@ export default function ApexHybridApp() {
       goal: newClientGoal.trim() || "Acondicionamiento Híbrido",
       plan: "APEX Pro · Mensual",
       kcal_target: Number(newClientKcal) || 2200,
+      protein_g: 185,
+      carbs_g: 235,
+      fats_g: 68,
+      diet_plan: "",
       compliance: 100,
       coach_note: "Bienvenido a APEX HYBRID. Mantén constancia en tus registros diarios.",
     };
@@ -706,10 +741,16 @@ export default function ApexHybridApp() {
         goal: data.goal,
         plan: data.plan,
         kcalTarget: data.kcal_target,
+        proteinTarget: data.protein_g || 185,
+        carbsTarget: data.carbs_g || 235,
+        fatsTarget: data.fats_g || 68,
+        dietPlan: data.diet_plan || "",
         compliance: data.compliance,
         coachNote: data.coach_note,
       };
       setClients((prev) => [created, ...prev]);
+      setSelectedClientId(created.id);
+      syncDietDraftWithClient(created);
       setNewClientName("");
       setNewClientGoal("");
       alert(`¡Cliente "${created.name}" guardado en Supabase!`);
@@ -769,6 +810,48 @@ export default function ApexHybridApp() {
       alert(`¡Ejercicio guardado en la nube y añadido al Día ${targetRoutineForNewEx}!`);
     } else {
       alert("Error al guardar ejercicio: " + error?.message);
+    }
+  };
+
+  // PRESCRIBIR / GUARDAR DIETA EN SUPABASE
+  const handleSaveDietPrescription = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const kcalVal = Number(dietKcalDraft) || 2200;
+    const protVal = Number(dietProteinDraft) || 0;
+    const carbsVal = Number(dietCarbsDraft) || 0;
+    const fatsVal = Number(dietFatsDraft) || 0;
+    const planText = dietPlanDraft.trim();
+
+    const { error } = await supabase
+      .from("clients")
+      .update({
+        kcal_target: kcalVal,
+        protein_g: protVal,
+        carbs_g: carbsVal,
+        fats_g: fatsVal,
+        diet_plan: planText,
+      })
+      .eq("id", selectedClientId);
+
+    if (!error) {
+      setClients((prev) =>
+        prev.map((c) =>
+          c.id === selectedClientId
+            ? {
+                ...c,
+                kcalTarget: kcalVal,
+                proteinTarget: protVal,
+                carbsTarget: carbsVal,
+                fatsTarget: fatsVal,
+                dietPlan: planText,
+              }
+            : c
+        )
+      );
+      alert(`¡Dieta prescrita y guardada en la nube para ${activeClient.name}!`);
+    } else {
+      alert("Error al guardar dieta: " + error.message);
     }
   };
 
@@ -855,7 +938,9 @@ export default function ApexHybridApp() {
                   <CloudCheck className="w-3.5 h-3.5" /> Nube Sincronizada
                 </span>
                 <h1 className="text-lg font-extrabold mt-0.5">Panel de Entrenador</h1>
-                <p className="text-xs text-zinc-400">Todo se guarda en tu base de datos</p>
+                <p className="text-xs text-zinc-400">
+                  Atleta activo: <strong className="text-zinc-200">{activeClient.name}</strong>
+                </p>
               </div>
               <div className="text-right">
                 <p className="text-2xl font-black text-[#4DF500]">{clients.length}</p>
@@ -863,10 +948,11 @@ export default function ApexHybridApp() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 bg-[#121417] p-1.5 rounded-2xl border border-zinc-800">
+            <div className="grid grid-cols-4 gap-1.5 bg-[#121417] p-1.5 rounded-2xl border border-zinc-800">
               {[
-                { id: "clientes", label: "Mis Clientes", icon: Users },
+                { id: "clientes", label: "Clientes", icon: Users },
                 { id: "biblioteca", label: "Ejercicios", icon: Dumbbell },
+                { id: "dieta", label: "Dieta", icon: Utensils },
                 { id: "asignar", label: "Directivas", icon: Send },
               ].map((t) => {
                 const Icon = t.icon;
@@ -875,7 +961,7 @@ export default function ApexHybridApp() {
                   <button
                     key={t.id}
                     onClick={() => setCoachSubTab(t.id as any)}
-                    className={`py-2 px-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                    className={`py-2 px-1.5 rounded-xl text-[11px] font-bold flex flex-col items-center justify-center gap-1 transition ${
                       active ? "bg-[#4DF500] text-black" : "text-zinc-400 hover:text-white"
                     }`}
                   >
@@ -938,6 +1024,7 @@ export default function ApexHybridApp() {
                         onClick={() => {
                           setSelectedClientId(client.id);
                           setCoachDirectiveDraft(client.coachNote);
+                          syncDietDraftWithClient(client);
                         }}
                         className={`p-4 rounded-2xl border cursor-pointer transition space-y-2 ${
                           isSelected
@@ -1059,6 +1146,114 @@ export default function ApexHybridApp() {
               </div>
             )}
 
+            {coachSubTab === "dieta" && (
+              <form
+                onSubmit={handleSaveDietPrescription}
+                className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-4"
+              >
+                <div>
+                  <h2 className="text-sm font-extrabold text-[#4DF500] flex items-center gap-1.5">
+                    <Utensils className="w-4 h-4" /> Prescribir Dieta y Macros
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Configura los objetivos y comidas para <strong className="text-white">{activeClient.name}</strong>.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-400 block mb-1">
+                    Seleccionar Atleta
+                  </label>
+                  <select
+                    value={selectedClientId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setSelectedClientId(nextId);
+                      const found = clients.find((c) => c.id === nextId);
+                      if (found) {
+                        setCoachDirectiveDraft(found.coachNote);
+                        syncDietDraftWithClient(found);
+                      }
+                    }}
+                    className="w-full bg-[#0A0B0D] border border-zinc-800 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-[#4DF500]"
+                  >
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.kcalTarget} kcal)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="text-[11px] font-bold text-zinc-400 block mb-1">
+                      Calorías (kcal/día)
+                    </label>
+                    <input
+                      type="number"
+                      value={dietKcalDraft}
+                      onChange={(e) => setDietKcalDraft(e.target.value)}
+                      className="w-full bg-[#0A0B0D] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#4DF500]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-zinc-400 block mb-1">
+                      Proteína (g)
+                    </label>
+                    <input
+                      type="number"
+                      value={dietProteinDraft}
+                      onChange={(e) => setDietProteinDraft(e.target.value)}
+                      className="w-full bg-[#0A0B0D] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#4DF500]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-zinc-400 block mb-1">
+                      Carbohidratos (g)
+                    </label>
+                    <input
+                      type="number"
+                      value={dietCarbsDraft}
+                      onChange={(e) => setDietCarbsDraft(e.target.value)}
+                      className="w-full bg-[#0A0B0D] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#4DF500]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-zinc-400 block mb-1">
+                      Grasas (g)
+                    </label>
+                    <input
+                      type="number"
+                      value={dietFatsDraft}
+                      onChange={(e) => setDietFatsDraft(e.target.value)}
+                      className="w-full bg-[#0A0B0D] border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#4DF500]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-zinc-400 block mb-1">
+                    Pauta de Comidas / Plan Nutricional
+                  </label>
+                  <textarea
+                    rows={6}
+                    placeholder={`Ejemplo:\n• Desayuno: 250g kéfir + 60g avena + 3 huevos\n• Comida: 180g pollo/ternera + 250g patata o arroz + verdura\n• Cena: 180g pescado blanco/pavo + ensalada + AOVE`}
+                    value={dietPlanDraft}
+                    onChange={(e) => setDietPlanDraft(e.target.value)}
+                    className="w-full bg-[#0A0B0D] border border-zinc-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-[#4DF500]"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full bg-[#4DF500] text-black font-extrabold text-xs py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-[#43d900] transition"
+                >
+                  <Utensils className="w-4 h-4" /> Guardar Dieta en la Nube
+                </button>
+              </form>
+            )}
+
             {coachSubTab === "asignar" && (
               <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-4">
                 <div>
@@ -1122,7 +1317,7 @@ export default function ApexHybridApp() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
-                        Sábado, 21 Noviembre
+                        Domingo, 22 Noviembre
                       </p>
                       <h1 className="text-2xl font-extrabold tracking-tight mt-0.5">
                         Hola, {activeClient.name.split(" ")[0]}
@@ -1507,6 +1702,20 @@ export default function ApexHybridApp() {
                     <h1 className="text-xl font-extrabold mt-0.5">Plan Nutricional</h1>
                   </div>
 
+                  {activeClient.dietPlan && (
+                    <div className="bg-[#121417] border border-[#4DF500]/40 rounded-2xl p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#4DF500] flex items-center gap-1">
+                          <Utensils className="w-3.5 h-3.5" /> Pauta Prescrita por el Coach
+                        </span>
+                        <span className="text-[11px] text-zinc-400">{targetKcal} kcal</span>
+                      </div>
+                      <p className="text-xs text-zinc-200 whitespace-pre-line leading-relaxed">
+                        {activeClient.dietPlan}
+                      </p>
+                    </div>
+                  )}
+
                   <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-5 space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="relative w-28 h-28 flex items-center justify-center">
@@ -1535,33 +1744,42 @@ export default function ApexHybridApp() {
                           <div className="flex justify-between text-xs mb-1">
                             <span className="text-zinc-300 font-medium">Proteína</span>
                             <span className="font-bold">
-                              55<span className="text-zinc-500 font-normal">/185g</span>
+                              55<span className="text-zinc-500 font-normal">/{targetProtein}g</span>
                             </span>
                           </div>
                           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                            <div className="h-full bg-[#4DF500] w-[30%] rounded-full" />
+                            <div
+                              className="h-full bg-[#4DF500] rounded-full"
+                              style={{ width: `${Math.min(100, Math.round((55 / Math.max(1, targetProtein)) * 100))}%` }}
+                            />
                           </div>
                         </div>
                         <div>
                           <div className="flex justify-between text-xs mb-1">
                             <span className="text-zinc-300 font-medium">Carbohidratos</span>
                             <span className="font-bold">
-                              91<span className="text-zinc-500 font-normal">/235g</span>
+                              91<span className="text-zinc-500 font-normal">/{targetCarbs}g</span>
                             </span>
                           </div>
                           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                            <div className="h-full bg-sky-400 w-[39%] rounded-full" />
+                            <div
+                              className="h-full bg-sky-400 rounded-full"
+                              style={{ width: `${Math.min(100, Math.round((91 / Math.max(1, targetCarbs)) * 100))}%` }}
+                            />
                           </div>
                         </div>
                         <div>
                           <div className="flex justify-between text-xs mb-1">
                             <span className="text-zinc-300 font-medium">Grasas</span>
                             <span className="font-bold">
-                              27<span className="text-zinc-500 font-normal">/68g</span>
+                              27<span className="text-zinc-500 font-normal">/{targetFats}g</span>
                             </span>
                           </div>
                           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                            <div className="h-full bg-amber-400 w-[40%] rounded-full" />
+                            <div
+                              className="h-full bg-amber-400 rounded-full"
+                              style={{ width: `${Math.min(100, Math.round((27 / Math.max(1, targetFats)) * 100))}%` }}
+                            />
                           </div>
                         </div>
                       </div>
