@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 
-const PREFERRED_MODELS = [
-  "gemini-3.8-flash",
-  "gemini-3-flash-preview",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-];
+const FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3-flash-preview"];
 
 const FOOD_RESPONSE_SCHEMA: Schema = {
   type: Type.OBJECT,
@@ -14,7 +9,7 @@ const FOOD_RESPONSE_SCHEMA: Schema = {
     is_food: {
       type: Type.BOOLEAN,
       description:
-        "True solo si la imagen muestra comida, bebida o una etiqueta nutricional. False si es un teclado, pared, objeto no alimentario o borroso ilegible.",
+        "True solo si la imagen muestra comida, bebida o una etiqueta nutricional. False si es un teclado, pared, ropa o cualquier objeto no alimentario.",
     },
     calories: {
       type: Type.NUMBER,
@@ -40,22 +35,38 @@ const FOOD_RESPONSE_SCHEMA: Schema = {
   required: ["is_food", "calories", "protein_g", "carbs_g", "fats_g", "summary"],
 };
 
-function isRetryableModelError(err: unknown): boolean {
-  const msg = String((err as any)?.message || err || "").toLowerCase();
-  const status = Number((err as any)?.status || (err as any)?.code || 0);
-  return (
-    status === 404 ||
-    status === 429 ||
-    status === 503 ||
-    msg.includes("404") ||
-    msg.includes("not_found") ||
-    msg.includes("no longer available") ||
-    msg.includes("503") ||
-    msg.includes("unavailable") ||
-    msg.includes("high demand") ||
-    msg.includes("quota") ||
-    msg.includes("429")
-  );
+async function getAvailableFlashModels(ai: GoogleGenAI): Promise<string[]> {
+  try {
+    const pager = await ai.models.list();
+    const found: string[] = [];
+
+    for await (const model of pager) {
+      const rawName = String(model?.name || "").replace(/^models\//, "");
+      const actions = Array.isArray(model?.supportedActions) ? model.supportedActions : [];
+      const supportsGenerate =
+        actions.length === 0 || actions.includes("generateContent");
+
+      if (supportsGenerate && rawName.includes("flash")) {
+        found.push(rawName);
+      }
+    }
+
+    // Priorizar modelos más recientes / 3.x / flash antes que versiones antiguas
+    found.sort((a, b) => {
+      const score = (m: string) => {
+        if (m.includes("3.8")) return 100;
+        if (m.includes("3-") || m.includes("3.")) return 90;
+        if (m.includes("flash-lite")) return 70;
+        if (m.includes("flash")) return 80;
+        return 10;
+      };
+      return score(b) - score(a);
+    });
+
+    return found.length > 0 ? Array.from(new Set(found)).slice(0, 3) : FALLBACK_MODELS;
+  } catch {
+    return FALLBACK_MODELS;
+  }
 }
 
 export async function POST(req: Request) {
@@ -66,14 +77,14 @@ export async function POST(req: Request) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Falta configurar GEMINI_API_KEY en las variables de entorno." },
+        { error: "Falta configurar GEMINI_API_KEY en Vercel o en .env.local." },
         { status: 500 }
       );
     }
 
     if (!imageBase64 || typeof imageBase64 !== "string") {
       return NextResponse.json(
-        { error: "No se recibió una imagen válida." },
+        { error: "No se recibió una imagen válida para analizar." },
         { status: 400 }
       );
     }
@@ -83,20 +94,21 @@ export async function POST(req: Request) {
     const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
 
     const ai = new GoogleGenAI({ apiKey });
+    const models = await getAvailableFlashModels(ai);
 
-    const prompt = `Analiza esta imagen como nutricionista deportivo.
-- Si NO muestra comida, bebida ni etiqueta de información nutricional (por ejemplo un teclado, escritorio, ropa, pared o un objeto cualquiera), devuelve is_food: false y todos los valores numéricos en 0.
-- Si SÍ muestra comida o etiqueta nutricional:
-  * Si es una tabla/etiqueta nutricional, lee los valores indicados (ajustando a la porción si es evidente).
-  * Si es un plato o alimento, estima de forma realista calorías, proteínas (g), carbohidratos (g) y grasas (g).
-Responde en español en el campo summary.`;
+    const prompt = `Eres un nutricionista deportivo analizando una foto capturada desde la cámara.
+1. Si NO hay comida, bebida ni etiqueta de información nutricional (por ejemplo: teclado, móvil, pared, zapato, mesa, etc.), pon is_food: false y todos los números en 0.
+2. Si SÍ hay comida o etiqueta nutricional:
+   - Si es una etiqueta nutricional, prioriza los valores de la etiqueta (ajustados a la porción visible si aplica).
+   - Si es un plato o alimento, estima de forma realista calorías, proteínas (g), carbohidratos (g) y grasas (g).
+Responde en español en summary.`;
 
-    let lastError: unknown = null;
+    let lastErrorMessage = "No se pudo completar el análisis.";
 
-    for (const model of PREFERRED_MODELS) {
+    for (const model of models) {
       try {
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Tiempo de espera agotado (10s)")), 10000)
+          setTimeout(() => reject(new Error(`Timeout con ${model}`)), 20000)
         );
 
         const requestPromise = ai.models.generateContent({
@@ -132,18 +144,14 @@ Responde en español en el campo summary.`;
             String(parsed.summary || "").trim() ||
             (isFood ? "Alimento o etiqueta detectada" : "No se detectó comida ni etiqueta nutricional"),
         });
-      } catch (err) {
-        lastError = err;
-        if (isRetryableModelError(err)) {
-          continue;
-        }
-        throw err;
+      } catch (err: any) {
+        lastErrorMessage = err?.message || String(err);
+        continue;
       }
     }
 
-    const detail = String((lastError as any)?.message || "Servicio temporalmente saturado");
     return NextResponse.json(
-      { error: `No se pudo completar el análisis tras probar modelos disponibles: ${detail}` },
+      { error: `Error al analizar con IA: ${lastErrorMessage}` },
       { status: 503 }
     );
   } catch (err: any) {
