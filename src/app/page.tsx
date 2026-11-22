@@ -173,15 +173,22 @@ export default function ApexHybridApp() {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const width = video.videoWidth || 640;
-    const height = video.videoHeight || 480;
+
+    const rawW = video.videoWidth || 640;
+    const rawH = video.videoHeight || 480;
+    const maxWidth = 800;
+    const scale = rawW > maxWidth ? maxWidth / rawW : 1;
+
+    const width = Math.round(rawW * scale);
+    const height = Math.round(rawH * scale);
+
     canvas.width = width;
     canvas.height = height;
 
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.drawImage(video, 0, 0, width, height);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
       setCapturedPhoto(dataUrl);
       setAiWarning("");
       setAiDetectedSummary("");

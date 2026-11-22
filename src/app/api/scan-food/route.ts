@@ -1,39 +1,61 @@
 import { NextResponse } from "next/server";
+import { GoogleGenAI, Type, Schema } from "@google/genai";
 
-const MODEL = "gemini-3.8-flash";
+const PREFERRED_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+];
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const FOOD_RESPONSE_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    is_food: {
+      type: Type.BOOLEAN,
+      description:
+        "True solo si la imagen muestra comida, bebida o una etiqueta nutricional. False si es un teclado, pared, objeto no alimentario o borroso ilegible.",
+    },
+    calories: {
+      type: Type.NUMBER,
+      description: "Calorías estimadas (kcal). 0 si is_food es false.",
+    },
+    protein_g: {
+      type: Type.NUMBER,
+      description: "Proteínas en gramos. 0 si is_food es false.",
+    },
+    carbs_g: {
+      type: Type.NUMBER,
+      description: "Carbohidratos en gramos. 0 si is_food es false.",
+    },
+    fats_g: {
+      type: Type.NUMBER,
+      description: "Grasas en gramos. 0 si is_food es false.",
+    },
+    summary: {
+      type: Type.STRING,
+      description: "Resumen breve en español de lo detectado.",
+    },
+  },
+  required: ["is_food", "calories", "protein_g", "carbs_g", "fats_g", "summary"],
+};
 
-async function callGemini(apiKey: string, payload: unknown) {
-  let lastErrorText = "";
-  let lastStatus = 502;
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    if (response.ok) {
-      return { ok: true as const, data: await response.json() };
-    }
-
-    lastStatus = response.status;
-    lastErrorText = await response.text();
-
-    if (response.status === 503 && attempt < 3) {
-      await wait(1200 * attempt);
-      continue;
-    }
-
-    return { ok: false as const, status: lastStatus, errorText: lastErrorText };
-  }
-
-  return { ok: false as const, status: lastStatus, errorText: lastErrorText };
+function isRetryableModelError(err: unknown): boolean {
+  const msg = String((err as any)?.message || err || "").toLowerCase();
+  const status = Number((err as any)?.status || (err as any)?.code || 0);
+  return (
+    status === 404 ||
+    status === 429 ||
+    status === 503 ||
+    msg.includes("404") ||
+    msg.includes("not_found") ||
+    msg.includes("no longer available") ||
+    msg.includes("503") ||
+    msg.includes("unavailable") ||
+    msg.includes("high demand") ||
+    msg.includes("quota") ||
+    msg.includes("429")
+  );
 }
 
 export async function POST(req: Request) {
@@ -44,14 +66,14 @@ export async function POST(req: Request) {
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Falta configurar GEMINI_API_KEY en el entorno del servidor." },
+        { error: "Falta configurar GEMINI_API_KEY en las variables de entorno." },
         { status: 500 }
       );
     }
 
     if (!imageBase64 || typeof imageBase64 !== "string") {
       return NextResponse.json(
-        { error: "No se recibió una imagen válida para analizar." },
+        { error: "No se recibió una imagen válida." },
         { status: 400 }
       );
     }
@@ -60,66 +82,70 @@ export async function POST(req: Request) {
     const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
     const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, "");
 
-    const prompt = `Eres un nutricionista deportivo analizando una foto capturada desde la cámara de un usuario.
-1. Revisa si en la imagen hay COMIDA, BEBIDA o una ETIQUETA DE INFORMACIÓN NUTRICIONAL.
-2. Si NO hay comida, bebida ni etiqueta nutricional (por ejemplo: un teclado, una pared, un zapato, un objeto cualquiera), pon "is_food": false y todos los números en 0.
-3. Si SÍ hay comida o etiqueta nutricional:
-   - Si es una etiqueta nutricional, prioriza los valores indicados en la etiqueta (ajustados a la porción visible si se aprecia).
-   - Si es un plato o alimento, estima de forma realista calorías, proteínas (g), carbohidratos (g) y grasas (g).
-Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
-{
-  "is_food": boolean,
-  "calories": number,
-  "protein_g": number,
-  "carbs_g": number,
-  "fats_g": number,
-  "summary": "descripción breve en español de lo detectado"
-}`;
+    const ai = new GoogleGenAI({ apiKey });
 
-    const payload = {
-      contents: [
-        {
-          parts: [
-            { text: prompt },
+    const prompt = `Analiza esta imagen como nutricionista deportivo.
+- Si NO muestra comida, bebida ni etiqueta de información nutricional (por ejemplo un teclado, escritorio, ropa, pared o un objeto cualquiera), devuelve is_food: false y todos los valores numéricos en 0.
+- Si SÍ muestra comida o etiqueta nutricional:
+  * Si es una tabla/etiqueta nutricional, lee los valores indicados (ajustando a la porción si es evidente).
+  * Si es un plato o alimento, estima de forma realista calorías, proteínas (g), carbohidratos (g) y grasas (g).
+Responde en español en el campo summary.`;
+
+    let lastError: unknown = null;
+
+    for (const model of PREFERRED_MODELS) {
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Tiempo de espera agotado (10s)")), 10000)
+        );
+
+        const requestPromise = ai.models.generateContent({
+          model,
+          contents: [
             {
-              inline_data: {
-                mime_type: mimeType,
+              inlineData: {
+                mimeType,
                 data: cleanBase64,
               },
             },
+            prompt,
           ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.2,
-      },
-    };
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: FOOD_RESPONSE_SCHEMA,
+            temperature: 0.1,
+          },
+        });
 
-    const result = await callGemini(apiKey, payload);
+        const response = await Promise.race([requestPromise, timeoutPromise]);
+        const rawText = response.text || "{}";
+        const parsed = JSON.parse(rawText);
+        const isFood = Boolean(parsed.is_food);
 
-    if (!result.ok) {
-      return NextResponse.json(
-        { error: `Error de Gemini (${result.status}): ${result.errorText}` },
-        { status: 502 }
-      );
+        return NextResponse.json({
+          is_food: isFood,
+          calories: isFood ? Math.max(0, Math.round(Number(parsed.calories) || 0)) : 0,
+          protein_g: isFood ? Math.max(0, Math.round(Number(parsed.protein_g) || 0)) : 0,
+          carbs_g: isFood ? Math.max(0, Math.round(Number(parsed.carbs_g) || 0)) : 0,
+          fats_g: isFood ? Math.max(0, Math.round(Number(parsed.fats_g) || 0)) : 0,
+          summary:
+            String(parsed.summary || "").trim() ||
+            (isFood ? "Alimento o etiqueta detectada" : "No se detectó comida ni etiqueta nutricional"),
+        });
+      } catch (err) {
+        lastError = err;
+        if (isRetryableModelError(err)) {
+          continue;
+        }
+        throw err;
+      }
     }
 
-    const rawText = result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-    const parsed = JSON.parse(rawText);
-
-    const isFood = Boolean(parsed.is_food);
-
-    return NextResponse.json({
-      is_food: isFood,
-      calories: isFood ? Math.max(0, Math.round(Number(parsed.calories) || 0)) : 0,
-      protein_g: isFood ? Math.max(0, Math.round(Number(parsed.protein_g) || 0)) : 0,
-      carbs_g: isFood ? Math.max(0, Math.round(Number(parsed.carbs_g) || 0)) : 0,
-      fats_g: isFood ? Math.max(0, Math.round(Number(parsed.fats_g) || 0)) : 0,
-      summary:
-        String(parsed.summary || "").trim() ||
-        (isFood ? "Alimento detectado" : "No se detectó comida ni etiqueta nutricional"),
-    });
+    const detail = String((lastError as any)?.message || "Servicio temporalmente saturado");
+    return NextResponse.json(
+      { error: `No se pudo completar el análisis tras probar modelos disponibles: ${detail}` },
+      { status: 503 }
+    );
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message || "Error inesperado al analizar la imagen." },
