@@ -1,42 +1,36 @@
 import { NextResponse } from "next/server";
 
-const MODELS_TO_TRY = ["gemini-3.8-flash", "gemini-2.5-flash"];
+const MODEL = "gemini-3.8-flash";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function callGeminiWithFallback(apiKey: string, payload: unknown) {
+async function callGemini(apiKey: string, payload: unknown) {
   let lastErrorText = "";
   let lastStatus = 502;
 
-  for (const model of MODELS_TO_TRY) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
-
-      if (response.ok) {
-        return { ok: true as const, data: await response.json() };
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       }
+    );
 
-      lastStatus = response.status;
-      lastErrorText = await response.text();
-
-      if (response.status === 503 && attempt < 2) {
-        await wait(1200 * attempt);
-        continue;
-      }
-
-      if (response.status === 503 || response.status === 404) {
-        break;
-      }
-
-      return { ok: false as const, status: lastStatus, errorText: lastErrorText };
+    if (response.ok) {
+      return { ok: true as const, data: await response.json() };
     }
+
+    lastStatus = response.status;
+    lastErrorText = await response.text();
+
+    if (response.status === 503 && attempt < 3) {
+      await wait(1200 * attempt);
+      continue;
+    }
+
+    return { ok: false as const, status: lastStatus, errorText: lastErrorText };
   }
 
   return { ok: false as const, status: lastStatus, errorText: lastErrorText };
@@ -102,7 +96,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
       },
     };
 
-    const result = await callGeminiWithFallback(apiKey, payload);
+    const result = await callGemini(apiKey, payload);
 
     if (!result.ok) {
       return NextResponse.json(
