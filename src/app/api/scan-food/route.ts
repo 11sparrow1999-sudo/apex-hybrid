@@ -1,5 +1,47 @@
 import { NextResponse } from "next/server";
 
+const MODELS_TO_TRY = ["gemini-3.8-flash", "gemini-2.5-flash"];
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function callGeminiWithFallback(apiKey: string, payload: unknown) {
+  let lastErrorText = "";
+  let lastStatus = 502;
+
+  for (const model of MODELS_TO_TRY) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (response.ok) {
+        return { ok: true as const, data: await response.json() };
+      }
+
+      lastStatus = response.status;
+      lastErrorText = await response.text();
+
+      if (response.status === 503 && attempt < 2) {
+        await wait(1200 * attempt);
+        continue;
+      }
+
+      if (response.status === 503 || response.status === 404) {
+        break;
+      }
+
+      return { ok: false as const, status: lastStatus, errorText: lastErrorText };
+    }
+  }
+
+  return { ok: false as const, status: lastStatus, errorText: lastErrorText };
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -40,43 +82,36 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura exacta:
   "summary": "descripción breve en español de lo detectado"
 }`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
+    const payload = {
+      contents: [
+        {
+          parts: [
+            { text: prompt },
             {
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: mimeType,
-                    data: cleanBase64,
-                  },
-                },
-              ],
+              inline_data: {
+                mime_type: mimeType,
+                data: cleanBase64,
+              },
             },
           ],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.2,
-          },
-        }),
-      }
-    );
+        },
+      ],
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: 0.2,
+      },
+    };
 
-    if (!response.ok) {
-      const errText = await response.text();
+    const result = await callGeminiWithFallback(apiKey, payload);
+
+    if (!result.ok) {
       return NextResponse.json(
-        { error: `Error de Gemini (${response.status}): ${errText}` },
+        { error: `Error de Gemini (${result.status}): ${result.errorText}` },
         { status: 502 }
       );
     }
 
-    const data = await response.json();
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    const rawText = result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
     const parsed = JSON.parse(rawText);
 
     const isFood = Boolean(parsed.is_food);
