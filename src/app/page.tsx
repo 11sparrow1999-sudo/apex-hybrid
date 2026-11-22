@@ -36,6 +36,7 @@ import {
   PlusCircle,
   CloudCheck,
   Utensils,
+  Sparkles,
 } from "lucide-react";
 
 interface ExerciseSet {
@@ -92,7 +93,7 @@ export default function ApexHybridApp() {
   const [openVideoExerciseId, setOpenVideoExerciseId] = useState<string | null>(null);
   const [openPrepMealId, setOpenPrepMealId] = useState<string | null>(null);
 
-  // Estados Cámara Escáner IA APEX
+  // Estados Cámara y Análisis IA Escáner APEX
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -100,10 +101,15 @@ export default function ApexHybridApp() {
   const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string>("");
   const [capturedPhoto, setCapturedPhoto] = useState<string>("");
-  const [scanKcal, setScanKcal] = useState<string>("450");
-  const [scanProtein, setScanProtein] = useState<string>("35");
-  const [scanCarbs, setScanCarbs] = useState<string>("45");
-  const [scanFats, setScanFats] = useState<string>("12");
+  const [isAnalyzingAI, setIsAnalyzingAI] = useState<boolean>(false);
+  const [aiWarning, setAiWarning] = useState<string>("");
+  const [aiDetectedSummary, setAiDetectedSummary] = useState<string>("");
+
+  const [scanKcal, setScanKcal] = useState<string>("0");
+  const [scanProtein, setScanProtein] = useState<string>("0");
+  const [scanCarbs, setScanCarbs] = useState<string>("0");
+  const [scanFats, setScanFats] = useState<string>("0");
+
   const [extraScanKcal, setExtraScanKcal] = useState<number>(0);
   const [extraScanProtein, setExtraScanProtein] = useState<number>(0);
   const [extraScanCarbs, setExtraScanCarbs] = useState<number>(0);
@@ -120,6 +126,8 @@ export default function ApexHybridApp() {
 
   const startCameraScan = async () => {
     setCameraError("");
+    setAiWarning("");
+    setAiDetectedSummary("");
     setScannerStatusMsg("");
     setCapturedPhoto("");
 
@@ -175,8 +183,55 @@ export default function ApexHybridApp() {
       ctx.drawImage(video, 0, 0, width, height);
       const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
       setCapturedPhoto(dataUrl);
+      setAiWarning("");
+      setAiDetectedSummary("");
+      setScannerStatusMsg("");
     }
     stopCameraStream();
+  };
+
+  const analyzePhotoWithAI = async () => {
+    if (!capturedPhoto) return;
+    setIsAnalyzingAI(true);
+    setAiWarning("");
+    setAiDetectedSummary("");
+    setScannerStatusMsg("");
+
+    try {
+      const res = await fetch("/api/scan-food", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: capturedPhoto }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setAiWarning(data?.error || "No se pudo analizar la imagen con IA.");
+        return;
+      }
+
+      if (!data.is_food) {
+        setScanKcal("0");
+        setScanProtein("0");
+        setScanCarbs("0");
+        setScanFats("0");
+        setAiWarning(
+          `No se detectó comida ni etiqueta nutricional en la imagen (${data.summary || "objeto no alimentario"}). Los macros se dejaron en 0.`
+        );
+        return;
+      }
+
+      setScanKcal(String(data.calories ?? 0));
+      setScanProtein(String(data.protein_g ?? 0));
+      setScanCarbs(String(data.carbs_g ?? 0));
+      setScanFats(String(data.fats_g ?? 0));
+      setAiDetectedSummary(data.summary || "Alimento o etiqueta detectada");
+    } catch {
+      setAiWarning("Error de conexión al contactar con el analizador IA.");
+    } finally {
+      setIsAnalyzingAI(false);
+    }
   };
 
   const applyScannedMacros = (e: React.FormEvent) => {
@@ -186,12 +241,23 @@ export default function ApexHybridApp() {
     const c = Number(scanCarbs) || 0;
     const f = Number(scanFats) || 0;
 
+    if (k === 0 && p === 0 && c === 0 && f === 0) {
+      setAiWarning("No hay calorías ni macros para sumar (valores en 0).");
+      return;
+    }
+
     setExtraScanKcal((prev) => prev + k);
     setExtraScanProtein((prev) => prev + p);
     setExtraScanCarbs((prev) => prev + c);
     setExtraScanFats((prev) => prev + f);
     setScannerStatusMsg(`Añadidos +${k} kcal (${p}g P · ${c}g C · ${f}g G) al registro de hoy.`);
     setCapturedPhoto("");
+    setAiDetectedSummary("");
+    setAiWarning("");
+    setScanKcal("0");
+    setScanProtein("0");
+    setScanCarbs("0");
+    setScanFats("0");
   };
 
   useEffect(() => {
@@ -2018,7 +2084,7 @@ export default function ApexHybridApp() {
                     </div>
                   </div>
 
-                  {/* ESCÁNER IA APEX CON CÁMARA REAL */}
+                  {/* ESCÁNER IA APEX CON ANÁLISIS REAL */}
                   <div className="bg-[#121417] border border-zinc-800 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -2083,6 +2149,29 @@ export default function ApexHybridApp() {
                           />
                         </div>
 
+                        <button
+                          type="button"
+                          disabled={isAnalyzingAI}
+                          onClick={analyzePhotoWithAI}
+                          className="w-full bg-[#4DF500] hover:bg-[#43d900] disabled:opacity-60 text-black font-extrabold text-xs py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          {isAnalyzingAI ? "Analizando con IA..." : "Analizar con IA"}
+                        </button>
+
+                        {aiDetectedSummary && (
+                          <p className="text-[11px] text-[#4DF500] bg-[#172115] border border-[#4DF500]/30 rounded-xl p-2.5">
+                            Detectado: <strong>{aiDetectedSummary}</strong>. Revisa o ajusta si hace falta y pulsa{" "}
+                            <strong>Sumar a mi día</strong>.
+                          </p>
+                        )}
+
+                        {aiWarning && (
+                          <p className="text-[11px] text-amber-300 bg-amber-950/40 border border-amber-700/60 rounded-xl p-2.5">
+                            {aiWarning}
+                          </p>
+                        )}
+
                         <div className="grid grid-cols-2 gap-2">
                           <div>
                             <label className="text-[10px] text-zinc-400 block mb-1">Calorías (kcal)</label>
@@ -2125,7 +2214,7 @@ export default function ApexHybridApp() {
                         <div className="flex gap-2">
                           <button
                             type="submit"
-                            className="flex-1 bg-[#4DF500] text-black font-extrabold text-xs py-2.5 rounded-xl"
+                            className="flex-1 bg-[#181B20] border border-[#4DF500]/50 text-[#4DF500] font-extrabold text-xs py-2.5 rounded-xl"
                           >
                             Sumar a mi día
                           </button>
@@ -2134,7 +2223,7 @@ export default function ApexHybridApp() {
                             onClick={startCameraScan}
                             className="px-3 py-2.5 rounded-xl bg-[#181B20] border border-zinc-700 text-xs text-zinc-300"
                           >
-                            Repetir
+                            Repetir foto
                           </button>
                         </div>
                       </form>
